@@ -43,7 +43,7 @@ func TestSystemAgentRouting(t *testing.T) {
 
 	// Mock Connection Agent that returns a simple success
 	connectionModel := &MockLLM{Response: "Connection established successfully."}
-	connectionAgent, err := agents.NewConnectionAgent(connectionModel)
+	connectionAgent, err := agents.NewConnectionAgent(connectionModel, "../../skill")
 	if err != nil {
 		t.Fatalf("Failed to create connection agent: %v", err)
 	}

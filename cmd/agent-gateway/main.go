@@ -24,6 +24,11 @@ func (m *MockLLM) Name() string { return "mock-llm" }
 func (m *MockLLM) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		var prompt string
+		if req.Config != nil && req.Config.SystemInstruction != nil {
+			for _, p := range req.Config.SystemInstruction.Parts {
+				prompt += p.Text
+			}
+		}
 		for _, c := range req.Contents {
 			for _, p := range c.Parts {
 				prompt += p.Text
@@ -36,7 +41,7 @@ func (m *MockLLM) GenerateContent(ctx context.Context, req *model.LLMRequest, st
 		// If prompt contains SystemAgent instructions, it's the System Agent turn.
 		
 		if strings.Contains(prompt, "systemagent") || strings.Contains(prompt, "route") {
-			if strings.Contains(prompt, "pdu") || strings.Contains(prompt, "create") || strings.Contains(prompt, "token") {
+			if strings.Contains(prompt, "pdu") || strings.Contains(prompt, "create") || strings.Contains(prompt, "token") || strings.Contains(prompt, "registration") || strings.Contains(prompt, "connect") {
 				response = "ROUTING_TO: CONNECTION_AGENT"
 			} else if strings.Contains(prompt, "hi") || strings.Contains(prompt, "hello") {
 				response = "I'm the 6G Core System Agent. How can I help you?"
@@ -104,7 +109,7 @@ func main() {
 		log.Fatalf("Unknown LLM provider: %s", provider)
 	}
 
-	connectionAgent, err := agents.NewConnectionAgent(m)
+	connectionAgent, err := agents.NewConnectionAgent(m, "skill")
 	if err != nil {
 		log.Fatalf("Failed to initialize Connection Agent: %v", err)
 	}

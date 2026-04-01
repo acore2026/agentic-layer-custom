@@ -19,18 +19,19 @@ func NewSystemAgent(m model.LLM) (agent.Agent, error) {
 		Name:        "SystemAgent",
 		Description: "The intent gateway that categorizes and routes natural language requests.",
 		Instruction: `You are the System Agent of a 6G Core Network.
-Your task is to categorize user intents and route them to the appropriate worker.
+Your ONLY task is to categorize user intents and route them to the appropriate worker.
 
 ROUTING TARGETS:
-1. 'CONNECTION_AGENT': For any intents related to UE connections, PDU sessions, access tokens, or signaling.
+1. 'CONNECTION_AGENT': For any intents related to UE connections, PDU sessions, access tokens, registration, or signaling.
 
-CLARIFICATION RULE:
-If the user's intent is highly ambiguous (e.g., "do something", "hi") or you cannot determine the correct target, you MUST return a response asking the user for clarification.
+STRICT RULE:
+DO NOT provide any technical explanations, descriptions, or help yourself.
+Your ONLY valid responses are routing decisions or clarification questions.
 
 RESPONSE FORMAT:
-If you know the target, respond EXACTLY as: 'ROUTING_TO: [TARGET_NAME]'.
+If you identified the target, respond ONLY with: 'ROUTING_TO: [TARGET_NAME]'.
 Example: 'ROUTING_TO: CONNECTION_AGENT'.
-If you need clarification, respond with the question for the user.`,
+If you are absolutely unsure and need more info, respond ONLY with a short question for the user.`,
 		Model:           m,
 		IncludeContents: llmagent.IncludeContentsDefault,
 	}
@@ -86,6 +87,7 @@ func RunAgent(ctx context.Context, a agent.Agent, input string) (string, error) 
 		Parts: []*genai.Part{{Text: input}},
 	}
 	var responseText string
+	thinkingStarted := false
 
 	for event, err := range r.Run(ctx, "poc-user", sessResp.Session.ID(), msg, agent.RunConfig{}) {
 		if err != nil {
@@ -93,11 +95,24 @@ func RunAgent(ctx context.Context, a agent.Agent, input string) (string, error) 
 		}
 		if event.Content != nil {
 			for _, p := range event.Content.Parts {
+				if p.Thought {
+					if !thinkingStarted {
+						fmt.Print("\033[2m[Thinking]\n")
+						thinkingStarted = true
+					}
+					fmt.Printf("%s", p.Text)
+					continue
+				}
 				if p.Text != "" {
 					responseText = p.Text
 				}
 			}
 		}
 	}
+
+	if thinkingStarted {
+		fmt.Print("\033[0m\n") // Reset formatting and add newline after thinking block
+	}
+
 	return responseText, nil
 }

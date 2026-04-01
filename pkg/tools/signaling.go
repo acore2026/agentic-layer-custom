@@ -47,3 +47,23 @@ func CreateSubnetPDUSessionTool(ctx tool.Context, args *CreateSubnetPDUSessionAr
 	fmt.Printf("[Signaling] PDU Session created successfully for UE: %s\n", args.UEID)
 	return &CreateSubnetPDUSessionResult{Status: "SUCCESS"}, nil
 }
+
+// UniversalMockTool is a generic mock tool that logs its call and returns a standard success response.
+func UniversalMockTool(ctx tool.Context, toolName string, args map[string]any) (any, error) {
+	fmt.Printf("[MOCK] Calling %s with args: %v\n", toolName, args)
+
+	// Small delay to simulate signaling
+	time.Sleep(500 * time.Millisecond)
+
+	ueID, _ := args["ue_id"].(string)
+	if ueID == "" {
+		ueID = "UNKNOWN"
+	}
+
+	return map[string]any{
+		"status":  "SUCCESS",
+		"message": "Simulated response for " + toolName,
+		"token":   "TOKEN-" + toolName + "-" + ueID,
+		"ue_id":    ueID,
+	}, nil
+}

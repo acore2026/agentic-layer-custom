@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"google.golang.org/adk/model"
+	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
 )
 
@@ -31,10 +32,11 @@ func (k *KimiModel) Name() string {
 }
 
 type openAIMessage struct {
-	Role       string           `json:"role"`
-	Content    string           `json:"content"`
-	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string           `json:"tool_call_id,omitempty"`
+	Role             string           `json:"role"`
+	Content          string           `json:"content"`
+	ReasoningContent string           `json:"reasoning_content,omitempty"`
+	ToolCalls        []openAIToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string           `json:"tool_call_id,omitempty"`
 }
 
 type openAIToolCall struct {
@@ -66,6 +68,21 @@ type openAIResponse struct {
 func (k *KimiModel) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		var messages []openAIMessage
+
+		// Add system instruction if present in Config
+		if req.Config != nil && req.Config.SystemInstruction != nil {
+			var systemText string
+			for _, p := range req.Config.SystemInstruction.Parts {
+				systemText += p.Text
+			}
+			if systemText != "" {
+				messages = append(messages, openAIMessage{
+					Role:    "system",
+					Content: systemText,
+				})
+			}
+		}
+
 		for _, content := range req.Contents {
 			role := content.Role
 			if role == "" || role == "user" {
@@ -75,10 +92,15 @@ func (k *KimiModel) GenerateContent(ctx context.Context, req *model.LLMRequest, 
 			}
 
 			var text string
+			var reasoningContent string
 			var toolCalls []openAIToolCall
 			var toolCallID string
 
 			for _, part := range content.Parts {
+				if part.Thought {
+					reasoningContent = part.Text
+					continue
+				}
 				if part.Text != "" {
 					text += part.Text
 				}
@@ -102,10 +124,11 @@ func (k *KimiModel) GenerateContent(ctx context.Context, req *model.LLMRequest, 
 			}
 
 			messages = append(messages, openAIMessage{
-				Role:       role,
-				Content:    text,
-				ToolCalls:  toolCalls,
-				ToolCallID: toolCallID,
+				Role:             role,
+				Content:          text,
+				ReasoningContent: reasoningContent,
+				ToolCalls:        toolCalls,
+				ToolCallID:       toolCallID,
 			})
 		}
 
@@ -130,10 +153,26 @@ func (k *KimiModel) GenerateContent(ctx context.Context, req *model.LLMRequest, 
 		}
 
 		if len(req.Tools) > 0 {
-			for _, t := range req.Tools {
+			for _, item := range req.Tools {
+				t, ok := item.(tool.Tool)
+				if !ok {
+					continue
+				}
 				oaReq.Tools = append(oaReq.Tools, openAITool{
-					Type:     "function",
-					Function: t,
+					Type: "function",
+					Function: struct {
+						Name       string         `json:"name"`
+						Description string         `json:"description"`
+						Parameters map[string]any `json:"parameters"`
+					}{
+						Name:        t.Name(),
+						Description: t.Description(),
+						Parameters: map[string]any{
+							"type":                 "object",
+							"properties":           map[string]any{}, // Generic map[string]any has no fixed properties
+							"additionalProperties": true,
+						},
+					},
 				})
 			}
 		}
@@ -184,6 +223,13 @@ func (k *KimiModel) GenerateContent(ctx context.Context, req *model.LLMRequest, 
 			Content: &genai.Content{
 				Role: "model",
 			},
+		}
+
+		if msg.ReasoningContent != "" {
+			llmResp.Content.Parts = append(llmResp.Content.Parts, &genai.Part{
+				Text:    msg.ReasoningContent,
+				Thought: true,
+			})
 		}
 
 		if msg.Content != "" {
