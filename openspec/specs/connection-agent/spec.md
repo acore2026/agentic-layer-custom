@@ -20,3 +20,10 @@ The Connection Agent SHALL delegate all state extraction and passing between too
 #### Scenario: State passing from skill instructions
 - **WHEN** a skill instruction says to pass a token from Tool A to Tool B
 - **THEN** the LLM SHALL extract the token from Tool A's output and provide it as an argument to Tool B
+
+### Requirement: Granular Event Emission
+The Connection Agent SHALL emit granular execution events (e.g., skill identification, step start, and step completion) to the telemetry stream to support detailed frontend visualization.
+
+#### Scenario: Skill identification event
+- **WHEN** the Connection Agent identifies the `init-registration` skill for an intent
+- **THEN** it SHALL emit an event indicating the selected skill and the planned workflow

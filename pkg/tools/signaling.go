@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"agentic-layer-custom/pkg/telemetry"
 	"fmt"
 	"time"
 
@@ -52,6 +53,22 @@ func CreateSubnetPDUSessionTool(ctx tool.Context, args *CreateSubnetPDUSessionAr
 func UniversalMockTool(ctx tool.Context, toolName string, args map[string]any) (any, error) {
 	fmt.Printf("[MOCK] Calling %s with args: %v\n", toolName, args)
 
+	// Emit Network PCAP Request
+	telemetry.GetHub().Emit(telemetry.TelemetryEvent{
+		Type:telemetry.EventTypeNetworkPCAP,
+		Data: telemetry.NetworkPCAPData{
+			Direction:   "request",
+			Source:      "ConnectionAgent",
+			Destination: getDestinationForTool(toolName),
+			Protocol:    "HTTP/2",
+			Info:        fmt.Sprintf("CALL %s", toolName),
+			Details: map[string]interface{}{
+				"toolName": toolName,
+				"payload":  args,
+			},
+		},
+	})
+
 	// Small delay to simulate signaling
 	time.Sleep(500 * time.Millisecond)
 
@@ -60,10 +77,32 @@ func UniversalMockTool(ctx tool.Context, toolName string, args map[string]any) (
 		ueID = "UNKNOWN"
 	}
 
-	return map[string]any{
+	result := map[string]any{
 		"status":  "SUCCESS",
 		"message": "Simulated response for " + toolName,
 		"token":   "TOKEN-" + toolName + "-" + ueID,
 		"ue_id":    ueID,
-	}, nil
+	}
+
+	// Emit Network PCAP Response
+	telemetry.GetHub().Emit(telemetry.TelemetryEvent{
+		Type:telemetry.EventTypeNetworkPCAP,
+		Data: telemetry.NetworkPCAPData{
+			Direction:   "response",
+			Source:      getDestinationForTool(toolName),
+			Destination: "ConnectionAgent",
+			Protocol:    "HTTP/2",
+			Info:        "200 OK (Application/JSON)",
+			Details: map[string]interface{}{
+				"status":  200,
+				"payload": result,
+			},
+		},
+	})
+
+	return result, nil
+}
+
+func getDestinationForTool(toolName string) string {
+	return toolName
 }

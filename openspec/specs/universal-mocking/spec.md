@@ -13,3 +13,14 @@ The universal mock tool SHALL return success responses with common fields that t
 #### Scenario: Return generic success result
 - **WHEN** a tool is called by the agent
 - **THEN** it SHALL return a map containing `status: SUCCESS` and a generic `token` string
+
+### Requirement: PCAP-Formatted Telemetry
+The Universal Mock Tool SHALL emit `network_pcap` events for both requests and responses, including protocol info, source/destination, and payload details.
+
+#### Scenario: Tool request PCAP emission
+- **WHEN** a mock tool is called (e.g., `Subscription_tool`)
+- **THEN** it SHALL emit a `network_pcap` event with `direction: request` and the input arguments
+
+#### Scenario: Tool response PCAP emission
+- **WHEN** a mock tool returns a result
+- **THEN** it SHALL emit a `network_pcap` event with `direction: response` and the output payload
