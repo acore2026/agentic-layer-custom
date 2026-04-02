@@ -1,11 +1,11 @@
 ## ADDED Requirements
 
 ### Requirement: ReAct Loop Execution
-The Connection Agent SHALL implement a ReAct (Reason + Act) loop using `google/adk-go` and the Gemini LLM provider.
+The Connection Agent SHALL implement a ReAct (Reason + Act) loop using `google/adk-go` and use dynamically loaded skill instructions for its orchestration logic. It SHALL be compatible with the ADK Launcher to ensure multi-step signaling sequences are captured and visualized in the web UI.
 
-#### Scenario: Successful intent execution
-- **WHEN** the Connection Agent receives a raw intent like "I need an access token and then a PDU session for my subnet"
-- **THEN** the agent reasons, calls the `Issue_Access_Token_tool`, receives the result, and then calls `Create_Subnet_PDUSession_tool` with the extracted state
+#### Scenario: Dynamic Skill Execution
+- **WHEN** the agent receives an intent like "initial registration for UE-01"
+- **THEN** the agent SHALL reason based on the loaded `init-registration` skill and call the corresponding tool sequence, and each step SHALL be visible in the web UI trace log
 
 ### Requirement: Blocking Tool Invocation
 Registered Go API tools MUST be strictly blocking and return a success or failure string back to the LLM.
@@ -15,8 +15,8 @@ Registered Go API tools MUST be strictly blocking and return a success or failur
 - **THEN** it waits for the mock signaling to complete and returns the token string as the tool's output to the LLM
 
 ### Requirement: LLM State Extraction and Management
-The Connection Agent SHALL delegate state extraction (e.g., UE IDs or Access Tokens) from tool outputs to the LLM for use in subsequent tool calls.
+The Connection Agent SHALL delegate all state extraction and passing between tools to the LLM, following the instructions provided in the skill definitions.
 
-#### Scenario: Token passed from one tool to the next
-- **WHEN** `Issue_Access_Token_tool` returns a token string
-- **THEN** the LLM extracts that token and passes it as an argument to `Create_Subnet_PDUSession_tool`
+#### Scenario: State passing from skill instructions
+- **WHEN** a skill instruction says to pass a token from Tool A to Tool B
+- **THEN** the LLM SHALL extract the token from Tool A's output and provide it as an argument to Tool B

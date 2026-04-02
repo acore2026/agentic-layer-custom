@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"iter"
@@ -12,8 +11,12 @@ import (
 	"agentic-layer-custom/pkg/agents"
 	"agentic-layer-custom/pkg/model/kimi"
 	"github.com/joho/godotenv"
+	"google.golang.org/adk/agent"
+	"google.golang.org/adk/cmd/launcher"
+	"google.golang.org/adk/cmd/launcher/full"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/model/gemini"
+	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 )
 
@@ -119,33 +122,28 @@ func main() {
 		log.Fatalf("Failed to initialize System Agent: %v", err)
 	}
 
-	fmt.Println("\n========================================")
-	fmt.Println("   6G AI CORE AGENT GATEWAY (PoC)       ")
-	fmt.Println("========================================")
-	fmt.Println("Available Workers: [CONNECTION_AGENT]")
-	fmt.Println("Type 'exit' to quit.")
-
-	reader := bufio.NewReader(os.Stdin)
-
-	for {
-		fmt.Print("\nIntent > ")
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
-
-		if input == "exit" {
-			break
-		}
-		if input == "" {
-			continue
-		}
-
-		response, err := agents.RouteIntent(ctx, systemAgent, connectionAgent, input)
-		if err != nil {
-			fmt.Printf("Error processing intent: %v\n", err)
-			continue
-		}
-
-		fmt.Printf("\n[Final Gateway Output]\n%s\n", response)
+	gatewayAgent, err := agents.NewGatewayAgent(systemAgent, connectionAgent)
+	if err != nil {
+		log.Fatalf("Failed to initialize Gateway Agent: %v", err)
 	}
-	fmt.Println("\nExiting 6G Agent Gateway...")
+
+	// Use GatewayAgent as the root, others as sub-workers
+	loader, err := agent.NewMultiLoader(gatewayAgent, systemAgent, connectionAgent)
+	if err != nil {
+		log.Fatalf("Failed to create agent loader: %v", err)
+	}
+
+	cfg := &launcher.Config{
+		AgentLoader:    loader,
+		SessionService: session.InMemoryService(),
+	}
+
+	l := full.NewLauncher()
+
+	fmt.Println("Launching ADK Web UI on http://localhost:8080/ui/ ...")
+	// The universal launcher needs "web" to activate the web server, 
+	// then we need "api" for the REST endpoints and "webui" for the dashboard.
+	if err := l.Execute(ctx, cfg, []string{"web", "api", "webui"}); err != nil {
+		log.Fatalf("Launcher execution failed: %v", err)
+	}
 }
