@@ -170,9 +170,9 @@ func main() {
 	l := universal.NewLauncher(
 		console.NewLauncher(),
 		web.NewLauncher(
+			api.NewLauncher(gatewayAgent),
 			webapi.NewLauncher(),
 			webui.NewLauncher(),
-			api.NewLauncher(gatewayAgent),
 		),
 	)
 

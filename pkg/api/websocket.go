@@ -39,7 +39,7 @@ func (l *WebsocketSublauncher) SetupSubrouters(router *mux.Router, config *launc
 	router.HandleFunc("/v1/intents/stream", func(w http.ResponseWriter, r *http.Request) {
 		HandleIntentsStream(w, r, l.gateway)
 	})
-	router.HandleFunc("/v1/skills", HandleSkills).Methods("GET", "OPTIONS")
+	router.HandleFunc("/api/skills", HandleSkills).Methods("GET", "OPTIONS")
 	return nil
 }
 

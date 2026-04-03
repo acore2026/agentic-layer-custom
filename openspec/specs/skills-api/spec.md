@@ -1,10 +1,10 @@
 ## ADDED Requirements
 
 ### Requirement: Skills Retrieval Endpoint
-The system SHALL provide a `/v1/skills` endpoint that returns a list of all available network signaling skills.
+The system SHALL provide a `GET /api/skills` endpoint that returns a list of all available network signaling skills.
 
 #### Scenario: Successful skills retrieval
-- **WHEN** a client sends a GET request to `/v1/skills`
+- **WHEN** a client sends a GET request to `/api/skills`
 - **THEN** the system SHALL return a 200 OK response with a JSON body containing a list of skills, each including `id`, `name`, `description`, and `definition` (raw Markdown).
 
 ### Requirement: Skill Definition Loading
