@@ -9,6 +9,21 @@ import (
 	"strings"
 )
 
+// HandleHealth provides a simple health check endpoint.
+func HandleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
 // Skill represents a network signaling procedure definition.
 type Skill struct {
 	ID          string `json:"id"`

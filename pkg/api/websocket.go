@@ -2,6 +2,7 @@ package api
 
 import (
 	"agentic-layer-custom/pkg/telemetry"
+	"agentic-layer-custom/pkg/workshop"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -23,28 +24,38 @@ var upgrader = websocket.Upgrader{
 
 // WebsocketSublauncher implements weblauncher.Sublauncher.
 type WebsocketSublauncher struct {
-	gateway agent.Agent
+	gateway  agent.Agent
+	workshop *workshop.Orchestrator
 }
 
-func NewLauncher(gateway agent.Agent) weblauncher.Sublauncher {
-	return &WebsocketSublauncher{gateway: gateway}
+func NewLauncher(gateway agent.Agent, ws *workshop.Orchestrator) weblauncher.Sublauncher {
+	return &WebsocketSublauncher{
+		gateway:  gateway,
+		workshop: ws,
+	}
 }
 
 func (l *WebsocketSublauncher) Keyword() string { return "ws" }
 func (l *WebsocketSublauncher) Parse(args []string) ([]string, error) { return args, nil }
 func (l *WebsocketSublauncher) CommandLineSyntax() string { return "" }
-func (l *WebsocketSublauncher) SimpleDescription() string { return "Adds WebSocket intent streaming API" }
+func (l *WebsocketSublauncher) SimpleDescription() string { return "Adds WebSocket intent streaming and skill workshop API" }
 
 func (l *WebsocketSublauncher) SetupSubrouters(router *mux.Router, config *launcher.Config) error {
 	router.HandleFunc("/v1/intents/stream", func(w http.ResponseWriter, r *http.Request) {
 		HandleIntentsStream(w, r, l.gateway)
 	})
+	router.HandleFunc("/api/health", HandleHealth).Methods("GET", "OPTIONS")
 	router.HandleFunc("/api/skills", HandleSkills).Methods("GET", "OPTIONS")
+	router.HandleFunc("/ws/agent-run", func(w http.ResponseWriter, r *http.Request) {
+		workshop.HandleAgentRun(w, r, l.workshop)
+	})
+	router.HandleFunc("/api/tools", workshop.HandleToolsCatalog).Methods("GET", "OPTIONS")
 	return nil
 }
 
 func (l *WebsocketSublauncher) UserMessage(webURL string, printer func(v ...any)) {
 	printer(fmt.Sprintf("       ws:     intent stream active at %s/v1/intents/stream", webURL))
+	printer(fmt.Sprintf("       ws:     skill workshop active at %s/ws/agent-run", webURL))
 }
 
 // IntentRequest represents the message from the React frontend.
