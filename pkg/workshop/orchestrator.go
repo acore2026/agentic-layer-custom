@@ -22,28 +22,28 @@ import (
 
 const maxCheckerAttempts = 3
 
-// Orchestrator manages the lifecycle of a skill generation run.
-type Orchestrator struct {
+// ServiceAgent manages the lifecycle of a skill generation run.
+type ServiceAgent struct {
 	appName        string
 	sessionService session.Service
 }
 
-func NewOrchestrator() *Orchestrator {
-	return &Orchestrator{
-		appName:        "Skill-Workshop",
+func NewServiceAgent() *ServiceAgent {
+	return &ServiceAgent{
+		appName:        "Service-Agent",
 		sessionService: session.InMemoryService(),
 	}
 }
 
-func (o *Orchestrator) Run(ctx context.Context, req StartRunRequest, emit func(StreamEvent) error) error {
+func (s *ServiceAgent) Run(ctx context.Context, req StartRunRequest, emit func(StreamEvent) error) error {
 	runID := strings.TrimSpace(req.RunID)
 	if runID == "" {
 		runID = uuid.NewString()
 	}
 
 	userPrompt := latestUserPrompt(req.Messages)
-	sessionID := "workshop-" + runID
-	userID := "workshop-user"
+	sessionID := "service-" + runID
+	userID := "service-user"
 
 	catalog := tools.GetNormalizedToolCatalog()
 	
@@ -75,24 +75,24 @@ func (o *Orchestrator) Run(ctx context.Context, req StartRunRequest, emit func(S
 		writerLLM = compatible.WithThinkingEnabled(req.ReasoningEnabled)
 	}
 
-	workshopAgents, err := BuildSkillWorkflowAgents(analysisLLM, writerLLM)
+	serviceAgents, err := BuildServiceAgents(analysisLLM, writerLLM)
 	if err != nil {
 		return err
 	}
 
 	pipelineRunner, err := runner.New(runner.Config{
-		AppName:        o.appName,
-		Agent:          workshopAgents.Pipeline,
-		SessionService: o.sessionService,
+		AppName:        s.appName,
+		Agent:          serviceAgents.Pipeline,
+		SessionService: s.sessionService,
 	})
 	if err != nil {
 		return fmt.Errorf("create pipeline runner: %w", err)
 	}
 
 	checkerRunner, err := runner.New(runner.Config{
-		AppName:        o.appName,
-		Agent:          workshopAgents.Checker,
-		SessionService: o.sessionService,
+		AppName:        s.appName,
+		Agent:          serviceAgents.Checker,
+		SessionService: s.sessionService,
 	})
 	if err != nil {
 		return fmt.Errorf("create checker runner: %w", err)
@@ -100,16 +100,16 @@ func (o *Orchestrator) Run(ctx context.Context, req StartRunRequest, emit func(S
 
 	initialState := buildInitialState(req, catalog)
 
-	if _, err := o.sessionService.Create(ctx, &session.CreateRequest{
-		AppName:   o.appName,
+	if _, err := s.sessionService.Create(ctx, &session.CreateRequest{
+		AppName:   s.appName,
 		UserID:    userID,
 		SessionID: sessionID,
 		State:     initialState,
 	}); err != nil {
-		return fmt.Errorf("create workshop session: %w", err)
+		return fmt.Errorf("create service session: %w", err)
 	}
 
-	log.Printf("[Workshop] run started: run_id=%s session_id=%s", runID, sessionID)
+	log.Printf("[ServiceAgent] run started: run_id=%s session_id=%s", runID, sessionID)
 	if err := emit(StreamEvent{
 		RunID:     runID,
 		Type:      "run_started",
@@ -123,11 +123,11 @@ func (o *Orchestrator) Run(ctx context.Context, req StartRunRequest, emit func(S
 		return err
 	}
 
-	if err := o.runAgent(ctx, pipelineRunner, userID, sessionID, userPrompt, nil, runID, emit); err != nil {
+	if err := s.runAgent(ctx, pipelineRunner, userID, sessionID, userPrompt, nil, runID, emit); err != nil {
 		return err
 	}
 
-	runState, err := o.loadSessionState(ctx, userID, sessionID)
+	runState, err := s.loadSessionState(ctx, userID, sessionID)
 	if err != nil {
 		return err
 	}
@@ -135,11 +135,11 @@ func (o *Orchestrator) Run(ctx context.Context, req StartRunRequest, emit func(S
 	rawDraft := formatStateString(runState[StateWriterMarkdownDraft], "")
 	currentDraft := extractMarkdownArtifact(rawDraft)
 	if strings.TrimSpace(currentDraft) == "" {
-		log.Printf("[Workshop] ERROR: skill writer agent did not emit a markdown draft. rawDraft content: %q", rawDraft)
+		log.Printf("[ServiceAgent] ERROR: skill writer agent did not emit a markdown draft. rawDraft content: %q", rawDraft)
 		return fmt.Errorf("skill writer agent did not emit a markdown draft (raw length: %d)", len(rawDraft))
 	}
 
-	log.Printf("[Workshop] Validating draft (length: %d). content preview: %q", len(currentDraft), limitString(currentDraft, 100))
+	log.Printf("[ServiceAgent] Validating draft (length: %d). content preview: %q", len(currentDraft), limitString(currentDraft, 100))
 	issues := validateMarkdownSkill(currentDraft, catalog)
 	if len(issues) == 0 {
 		if err := emitStatusSessionEvent(runID, "markdown_format_checker_agent", "Skill format check passed.", emit); err != nil {
@@ -164,7 +164,7 @@ func (o *Orchestrator) Run(ctx context.Context, req StartRunRequest, emit func(S
 		}); err != nil {
 			return err
 		}
-		log.Printf("[Workshop] run completed without checker rewrite: run_id=%s session_id=%s", runID, sessionID)
+		log.Printf("[ServiceAgent] run completed without checker rewrite: run_id=%s session_id=%s", runID, sessionID)
 		return emit(StreamEvent{
 			RunID:     runID,
 			Type:      "run_complete",
@@ -174,7 +174,7 @@ func (o *Orchestrator) Run(ctx context.Context, req StartRunRequest, emit func(S
 	}
 
 	for attempt := 1; attempt <= maxCheckerAttempts; attempt++ {
-		log.Printf("[Workshop] checker attempt %d: issues=%v", attempt, issues)
+		log.Printf("[ServiceAgent] checker attempt %d: issues=%v", attempt, issues)
 		statusText := "Checking skill format."
 		if len(issues) > 0 && attempt > 1 {
 			statusText = "Fixing skill format."
@@ -188,11 +188,11 @@ func (o *Orchestrator) Run(ctx context.Context, req StartRunRequest, emit func(S
 			StateCheckerAttemptCount: attempt,
 			StateCheckerIssues:       formatMarkdownIssues(issues),
 		}
-		if err := o.runAgent(ctx, checkerRunner, userID, sessionID, "Validate and correct the markdown skill draft.", stateDelta, runID, emit); err != nil {
+		if err := s.runAgent(ctx, checkerRunner, userID, sessionID, "Validate and correct the markdown skill draft.", stateDelta, runID, emit); err != nil {
 			return err
 		}
 
-		runState, err = o.loadSessionState(ctx, userID, sessionID)
+		runState, err = s.loadSessionState(ctx, userID, sessionID)
 		if err != nil {
 			return err
 		}
@@ -200,14 +200,14 @@ func (o *Orchestrator) Run(ctx context.Context, req StartRunRequest, emit func(S
 		rawChecked := formatStateString(runState[StateSkillMarkdown], "")
 		checkedDraft := extractMarkdownArtifact(rawChecked)
 		if strings.TrimSpace(checkedDraft) == "" {
-			log.Printf("[Workshop] ERROR: checker agent did not emit a markdown skill document. rawChecked content: %q", rawChecked)
+			log.Printf("[ServiceAgent] ERROR: checker agent did not emit a markdown skill document. rawChecked content: %q", rawChecked)
 			return fmt.Errorf("markdown format checker agent did not emit a markdown skill document (raw length: %d)", len(rawChecked))
 		}
 
-		log.Printf("[Workshop] Validating checked draft (length: %d). content preview: %q", len(checkedDraft), limitString(checkedDraft, 100))
+		log.Printf("[ServiceAgent] Validating checked draft (length: %d). content preview: %q", len(checkedDraft), limitString(checkedDraft, 100))
 		issues = validateMarkdownSkill(checkedDraft, catalog)
 		if len(issues) == 0 {
-			log.Printf("[Workshop] run completed: run_id=%s session_id=%s", runID, sessionID)
+			log.Printf("[ServiceAgent] run completed: run_id=%s session_id=%s", runID, sessionID)
 			return emit(StreamEvent{
 				RunID:     runID,
 				Type:      "run_complete",
@@ -222,7 +222,7 @@ func (o *Orchestrator) Run(ctx context.Context, req StartRunRequest, emit func(S
 	return fmt.Errorf("markdown format checker could not produce valid markdown after %d attempts: %s", maxCheckerAttempts, strings.Join(issues, "; "))
 }
 
-func (o *Orchestrator) runAgent(
+func (s *ServiceAgent) runAgent(
 	ctx context.Context,
 	adkRunner *runner.Runner,
 	userID string,
@@ -291,14 +291,14 @@ func (o *Orchestrator) runAgent(
 	return nil
 }
 
-func (o *Orchestrator) loadSessionState(ctx context.Context, userID string, sessionID string) (map[string]any, error) {
-	sessionResponse, err := o.sessionService.Get(ctx, &session.GetRequest{
-		AppName:   o.appName,
+func (s *ServiceAgent) loadSessionState(ctx context.Context, userID string, sessionID string) (map[string]any, error) {
+	sessionResponse, err := s.sessionService.Get(ctx, &session.GetRequest{
+		AppName:   s.appName,
 		UserID:    userID,
 		SessionID: sessionID,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("load workshop session: %w", err)
+		return nil, fmt.Errorf("load service session: %w", err)
 	}
 
 	values := map[string]any{}

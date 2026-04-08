@@ -10,6 +10,7 @@ import (
 	"agentic-layer-custom/pkg/api"
 	"agentic-layer-custom/pkg/model/kimi"
 	"agentic-layer-custom/pkg/workshop"
+	"strconv"
 
 	"github.com/joho/godotenv"
 	"google.golang.org/adk/agent"
@@ -85,7 +86,7 @@ func main() {
 		log.Fatalf("Failed to initialize Gateway Agent: %v", err)
 	}
 
-	workshopOrchestrator := workshop.NewOrchestrator()
+	serviceAgent := workshop.NewServiceAgent()
 
 	// Use GatewayAgent as the root, others as sub-workers
 	loader, err := agent.NewMultiLoader(gatewayAgent, systemAgent, connectionAgent)
@@ -93,21 +94,29 @@ func main() {
 		log.Fatalf("Failed to create agent loader: %v", err)
 	}
 
+	port := 8080
+	if p := os.Getenv("API_PORT"); p != "" {
+		if val, err := strconv.Atoi(p); err == nil {
+			port = val
+		}
+	}
+
 	cfg := &launcher.Config{
 		AgentLoader:    loader,
 		SessionService: session.InMemoryService(),
+		Port:           port,
 	}
 
 	l := universal.NewLauncher(
 		console.NewLauncher(),
 		web.NewLauncher(
-			api.NewLauncher(gatewayAgent, workshopOrchestrator),
+			api.NewLauncher(gatewayAgent, serviceAgent),
 			webapi.NewLauncher(),
 			webui.NewLauncher(),
 		),
 	)
 
-	fmt.Println("Launching ADK Web UI on http://localhost:8080/ui/ ...")
+	fmt.Printf("Launching ADK Web UI on http://localhost:%d/ui/ ...\n", port)
 	// The universal launcher needs "web" to activate the web server,
 	// then "api" for REST, "webui" for dashboard, and "ws" for our custom stream.
 	if err := l.Execute(ctx, cfg, []string{"web", "api", "webui", "ws"}); err != nil {

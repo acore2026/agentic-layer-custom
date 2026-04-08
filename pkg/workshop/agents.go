@@ -13,30 +13,30 @@ import (
 
 // State keys for the workshop workflow
 const (
-	StateConversationTranscript = "workshop.conversation_transcript"
-	StateCurrentSkillMarkdown   = "workshop.current_skill_markdown"
-	StateLatestUserRequest      = "workshop.latest_user_request"
-	StateNormalizedPrompt       = "workshop.normalized_prompt"
-	StateToolCatalogJSON        = "workshop.tool_catalog_json"
-	StateToolShortlist          = "workshop.tool_shortlist"
-	StateIntentCategory         = "workshop.intent_category"
-	StateIntentAnalysisSummary  = "workshop.intent_analysis_summary"
-	StateWriterMarkdownDraft    = "workshop.writer_markdown_draft"
-	StateCheckerIssues          = "workshop.checker_issues"
-	StateCheckerAttemptCount    = "workshop.checker_attempt_count"
-	StateSkillMarkdown          = "workshop.skill_markdown"
-	StateKnowledgeCase          = "workshop.knowledge_case"
-	StateKnowledgeBrief         = "workshop.knowledge_brief"
+	StateConversationTranscript = "service.conversation_transcript"
+	StateCurrentSkillMarkdown   = "service.current_skill_markdown"
+	StateLatestUserRequest      = "service.latest_user_request"
+	StateNormalizedPrompt       = "service.normalized_prompt"
+	StateToolCatalogJSON        = "service.tool_catalog_json"
+	StateToolShortlist          = "service.tool_shortlist"
+	StateIntentCategory         = "service.intent_category"
+	StateIntentAnalysisSummary  = "service.intent_analysis_summary"
+	StateWriterMarkdownDraft    = "service.writer_markdown_draft"
+	StateCheckerIssues          = "service.checker_issues"
+	StateCheckerAttemptCount    = "service.checker_attempt_count"
+	StateSkillMarkdown          = "service.skill_markdown"
+	StateKnowledgeCase          = "service.knowledge_case"
+	StateKnowledgeBrief         = "service.knowledge_brief"
 )
 
-// SkillAgents holds the agents used in the workshop workflow
-type SkillAgents struct {
+// ServiceAgents holds the agents used in the service generation workflow
+type ServiceAgents struct {
 	Pipeline agent.Agent
 	Checker  agent.Agent
 }
 
-// BuildSkillWorkflowAgents creates the multi-agent workflow for skill generation
-func BuildSkillWorkflowAgents(analysisLLM model.LLM, llm model.LLM) (*SkillAgents, error) {
+// BuildServiceAgents creates the multi-agent workflow for service generation
+func BuildServiceAgents(analysisLLM model.LLM, llm model.LLM) (*ServiceAgents, error) {
 	intentAnalysisAgent, err := llmagent.New(llmagent.Config{
 		Name:                "intent_analysis_agent",
 		Description:         "Analyzes the request, confirms the intent category, and summarizes the workflow direction.",
@@ -84,7 +84,7 @@ func BuildSkillWorkflowAgents(analysisLLM model.LLM, llm model.LLM) (*SkillAgent
 		return nil, fmt.Errorf("create root workflow agent: %w", err)
 	}
 
-	return &SkillAgents{
+	return &ServiceAgents{
 		Pipeline: rootAgent,
 		Checker:  checkerAgent,
 	}, nil

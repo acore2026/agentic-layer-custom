@@ -15,7 +15,7 @@ var upgrader = websocket.Upgrader{
 }
 
 // HandleAgentRun manages the WebSocket connection for a skill generation run.
-func HandleAgentRun(w http.ResponseWriter, r *http.Request, orchestrator *Orchestrator) {
+func HandleAgentRun(w http.ResponseWriter, r *http.Request, agent *ServiceAgent) {
 	if r.Method == "OPTIONS" {
 		WriteCORS(w, r)
 		w.WriteHeader(http.StatusNoContent)
@@ -24,12 +24,12 @@ func HandleAgentRun(w http.ResponseWriter, r *http.Request, orchestrator *Orches
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		fmt.Printf("[Workshop] Upgrade failed: %v\n", err)
+		fmt.Printf("[ServiceAgent] Upgrade failed: %v\n", err)
 		return
 	}
 	defer conn.Close()
 
-	fmt.Println("[Workshop] Client connected to /ws/agent-run")
+	fmt.Println("[ServiceAgent] Client connected to /ws/agent-run")
 
 	var start StartRunRequest
 	if err := conn.ReadJSON(&start); err != nil {
@@ -60,7 +60,7 @@ func HandleAgentRun(w http.ResponseWriter, r *http.Request, orchestrator *Orches
 		return conn.WriteJSON(event)
 	}
 
-	if err := orchestrator.Run(r.Context(), start, emit); err != nil {
+	if err := agent.Run(r.Context(), start, emit); err != nil {
 		_ = conn.WriteJSON(StreamEvent{
 			RunID: start.RunID,
 			Type:  "run_error",
