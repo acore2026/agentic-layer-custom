@@ -104,7 +104,6 @@ func main() {
 	cfg := &launcher.Config{
 		AgentLoader:    loader,
 		SessionService: session.InMemoryService(),
-		Port:           port,
 	}
 
 	l := universal.NewLauncher(
@@ -119,7 +118,8 @@ func main() {
 	fmt.Printf("Launching ADK Web UI on http://localhost:%d/ui/ ...\n", port)
 	// The universal launcher needs "web" to activate the web server,
 	// then "api" for REST, "webui" for dashboard, and "ws" for our custom stream.
-	if err := l.Execute(ctx, cfg, []string{"web", "api", "webui", "ws"}); err != nil {
+	executeArgs := []string{"web", "--port", strconv.Itoa(port), "api", "webui", "ws"}
+	if err := l.Execute(ctx, cfg, executeArgs); err != nil {
 		log.Fatalf("Launcher execution failed: %v", err)
 	}
 }
