@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
@@ -41,21 +42,24 @@ func (l *WebsocketSublauncher) CommandLineSyntax() string { return "" }
 func (l *WebsocketSublauncher) SimpleDescription() string { return "Adds WebSocket intent streaming and Service Agent API" }
 
 func (l *WebsocketSublauncher) SetupSubrouters(router *mux.Router, config *launcher.Config) error {
-	router.HandleFunc("/v1/intents/stream", func(w http.ResponseWriter, r *http.Request) {
-		HandleIntentsStream(w, r, l.gateway)
-	})
+	// Unified handler for all paths to ensure maximum compatibility with frontend expectations
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		HandleUnifiedWebSocket(w, r, l.gateway, l.serviceAgent)
+	}
+
+	router.HandleFunc("/v1/intents/stream", handler)
+	router.HandleFunc("/ws/agent-run", handler)
+	router.HandleFunc("/ws", handler)
+
 	router.HandleFunc("/api/health", HandleHealth).Methods("GET", "OPTIONS")
 	router.HandleFunc("/api/skills", HandleSkills).Methods("GET", "OPTIONS")
-	router.HandleFunc("/ws/agent-run", func(w http.ResponseWriter, r *http.Request) {
-		workshop.HandleAgentRun(w, r, l.serviceAgent)
-	})
 	router.HandleFunc("/api/tools", workshop.HandleToolsCatalog).Methods("GET", "OPTIONS")
 	return nil
 }
 
 func (l *WebsocketSublauncher) UserMessage(webURL string, printer func(v ...any)) {
-	printer(fmt.Sprintf("       ws:     intent stream active at %s/v1/intents/stream", webURL))
-	printer(fmt.Sprintf("       ws:     service agent active at %s/ws/agent-run", webURL))
+	printer(fmt.Sprintf("       ws:     unified agent api active at %s/ws/agent-run", webURL))
+	printer(fmt.Sprintf("       ws:     signaling stream active at %s/v1/intents/stream", webURL))
 }
 
 // IntentRequest represents the message from the React frontend.
@@ -67,8 +71,9 @@ type IntentRequest struct {
 	} `json:"data"`
 }
 
-// HandleIntentsStream manages the WebSocket connection and orchestrates the agent run.
-func HandleIntentsStream(w http.ResponseWriter, r *http.Request, gateway agent.Agent) {
+// HandleUnifiedWebSocket manages a WebSocket connection and dispatches to the appropriate engine
+// based on the message type (signaling vs workshop).
+func HandleUnifiedWebSocket(w http.ResponseWriter, r *http.Request, gateway agent.Agent, sa *workshop.ServiceAgent) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		fmt.Printf("[WS] Upgrade failed: %v\n", err)
@@ -76,70 +81,116 @@ func HandleIntentsStream(w http.ResponseWriter, r *http.Request, gateway agent.A
 	}
 	defer conn.Close()
 
-	fmt.Println("[WS] Client connected")
+	fmt.Printf("[WS] Client connected to %s\n", r.URL.Path)
+
+	var writeMu sync.Mutex
+
+	for {
+		_, p, err := conn.ReadMessage()
+		if err != nil {
+			fmt.Printf("[WS] Connection closed: %v\n", err)
+			return
+		}
+
+		var generic struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(p, &generic); err != nil {
+			continue
+		}
+
+		switch generic.Type {
+		case "execute_intent":
+			var req IntentRequest
+			if err := json.Unmarshal(p, &req); err != nil {
+				continue
+			}
+			go handleSignaling(conn, &writeMu, req, gateway)
+
+		case "start_run":
+			var req workshop.StartRunRequest
+			if err := json.Unmarshal(p, &req); err != nil {
+				continue
+			}
+			go handleWorkshop(conn, &writeMu, req, sa)
+
+		default:
+			fmt.Printf("[WS] Unknown message type: %s\n", generic.Type)
+		}
+	}
+}
+
+func handleSignaling(conn *websocket.Conn, mu *sync.Mutex, req IntentRequest, gateway agent.Agent) {
+	fmt.Printf("[WS] Executing signaling intent: %s\n", req.Data.Intent)
 
 	// Subscribe to telemetry hub
 	telemetryChan := telemetry.GetHub().Subscribe()
 	defer telemetry.GetHub().Unsubscribe(telemetryChan)
 
 	// Goroutine to pump telemetry to WebSocket
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		for event := range telemetryChan {
 			msg, _ := json.Marshal(event)
-			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			mu.Lock()
+			err := conn.WriteMessage(websocket.TextMessage, msg)
+			mu.Unlock()
+			if err != nil {
 				return
 			}
 		}
 	}()
 
-	for {
-		_, p, err := conn.ReadMessage()
+	// Run the gateway agent
+	ctx := context.Background()
+	ss := session.InMemoryService()
+	run, err := runner.New(runner.Config{
+		AppName:        "6G-AI-Core",
+		Agent:          gateway,
+		SessionService: ss,
+	})
+	if err != nil {
+		fmt.Printf("[WS] Runner creation failed: %v\n", err)
+		return
+	}
+
+	sessResp, _ := ss.Create(ctx, &session.CreateRequest{
+		AppName: "6G-AI-Core",
+		UserID:  "web-user",
+	})
+
+	msg := &genai.Content{
+		Role:  "user",
+		Parts: []*genai.Part{{Text: req.Data.Intent}},
+	}
+
+	for _, err := range run.Run(ctx, "web-user", sessResp.Session.ID(), msg, agent.RunConfig{}) {
 		if err != nil {
-			fmt.Printf("[WS] Read failed: %v\n", err)
-			return
+			fmt.Printf("[WS] Agent run error: %v\n", err)
+			break
 		}
+	}
+}
 
-		var req IntentRequest
-		if err := json.Unmarshal(p, &req); err != nil {
-			continue
-		}
+func handleWorkshop(conn *websocket.Conn, mu *sync.Mutex, req workshop.StartRunRequest, sa *workshop.ServiceAgent) {
+	fmt.Printf("[WS] Executing workshop run: %s\n", req.RunID)
 
-		if req.Type == "execute_intent" {
-			fmt.Printf("[WS] Executing intent: %s\n", req.Data.Intent)
-			
-			// Run the gateway agent
-			go func() {
-				ctx := context.Background()
-				ss := session.InMemoryService()
-				run, err := runner.New(runner.Config{
-					AppName:        "6G-AI-Core",
-					Agent:          gateway,
-					SessionService: ss,
-				})
-				if err != nil {
-					fmt.Printf("[WS] Runner creation failed: %v\n", err)
-					return
-				}
+	emit := func(event workshop.StreamEvent) error {
+		mu.Lock()
+		defer mu.Unlock()
+		return conn.WriteJSON(event)
+	}
 
-				sessResp, _ := ss.Create(ctx, &session.CreateRequest{
-					AppName: "6G-AI-Core",
-					UserID:  "web-user",
-				})
-
-				msg := &genai.Content{
-					Role:  "user",
-					Parts: []*genai.Part{{Text: req.Data.Intent}},
-				}
-
-				// The GatewayAgent internally handles its own telemetry emission
-				// We just need to drive the execution
-				for _, err := range run.Run(ctx, "web-user", sessResp.Session.ID(), msg, agent.RunConfig{}) {
-					if err != nil {
-						fmt.Printf("[WS] Agent run error: %v\n", err)
-						break
-					}
-				}
-			}()
-		}
+	if err := sa.Run(context.Background(), req, emit); err != nil {
+		fmt.Printf("[WS] Workshop run failed: %v\n", err)
+		_ = emit(workshop.StreamEvent{
+			RunID: req.RunID,
+			Type:  "run_error",
+			Data: map[string]any{
+				"message": "Agent run failed.",
+				"detail":  err.Error(),
+			},
+		})
 	}
 }
