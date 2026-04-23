@@ -2,19 +2,21 @@ package workshop
 
 import (
 	"agentic-layer-custom/pkg/model"
-	"agentic-layer-custom/pkg/model/kimi"
+	"agentic-layer-custom/pkg/observability"
 	"agentic-layer-custom/pkg/tools"
 	"context"
 	"fmt"
 	"log"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
 	adkmodel "google.golang.org/adk/model"
+	"google.golang.org/adk/model/gemini"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
@@ -26,12 +28,14 @@ const maxCheckerAttempts = 3
 type ServiceAgent struct {
 	appName        string
 	sessionService session.Service
+	langfuse       *observability.Langfuse
 }
 
-func NewServiceAgent() *ServiceAgent {
+func NewServiceAgent(langfuse *observability.Langfuse) *ServiceAgent {
 	return &ServiceAgent{
 		appName:        "Service-Agent",
 		sessionService: session.InMemoryService(),
+		langfuse:       langfuse,
 	}
 }
 
@@ -46,26 +50,40 @@ func (s *ServiceAgent) Run(ctx context.Context, req StartRunRequest, emit func(S
 	userID := "service-user"
 
 	catalog := tools.GetNormalizedToolCatalog()
-	
+
 	// Use environment variables for LLM configuration
 	provider := os.Getenv("LLM_PROVIDER")
+	if provider == "" {
+		provider = model.ProviderGLM5
+	}
 	var baseLLM adkmodel.LLM
+	var err error
 
-	if provider == "kimi" {
-		apiKey := os.Getenv("KIMI_API_KEY")
-		modelName := os.Getenv("KIMI_MODEL")
-		if modelName == "" {
-			modelName = "moonshot-v1-8k"
+	switch provider {
+	case model.ProviderGLM5:
+		baseLLM, err = model.NewGLM5LLMFromEnv()
+		if err != nil {
+			return fmt.Errorf("initialize glm5 provider: %w", err)
 		}
-		baseLLM = kimi.NewKimiModel(apiKey, modelName)
-	} else {
+	case "openai":
 		apiKey := os.Getenv("OPENAI_API_KEY")
 		baseURL := os.Getenv("OPENAI_BASE_URL")
 		modelName := os.Getenv("OPENAI_MODEL_NAME")
 		if modelName == "" {
 			modelName = "gpt-4o"
 		}
-		baseLLM = model.NewOpenAICompatibleLLM(modelName, baseURL, apiKey)
+		baseLLM = model.NewOpenAICompatibleLLM(modelName, model.NormalizeOpenAIBaseURL(baseURL), apiKey)
+	case "gemini":
+		modelName := os.Getenv("GEMINI_MODEL")
+		if modelName == "" {
+			modelName = "gemini-1.5-flash"
+		}
+		baseLLM, err = gemini.NewModel(ctx, modelName, nil)
+		if err != nil {
+			return fmt.Errorf("initialize gemini provider: %w", err)
+		}
+	default:
+		return fmt.Errorf("unsupported LLM_PROVIDER %q", provider)
 	}
 
 	analysisLLM := baseLLM
@@ -84,6 +102,7 @@ func (s *ServiceAgent) Run(ctx context.Context, req StartRunRequest, emit func(S
 		AppName:        s.appName,
 		Agent:          serviceAgents.Pipeline,
 		SessionService: s.sessionService,
+		PluginConfig:   s.pluginConfig(),
 	})
 	if err != nil {
 		return fmt.Errorf("create pipeline runner: %w", err)
@@ -93,6 +112,7 @@ func (s *ServiceAgent) Run(ctx context.Context, req StartRunRequest, emit func(S
 		AppName:        s.appName,
 		Agent:          serviceAgents.Checker,
 		SessionService: s.sessionService,
+		PluginConfig:   s.pluginConfig(),
 	})
 	if err != nil {
 		return fmt.Errorf("create checker runner: %w", err)
@@ -108,6 +128,8 @@ func (s *ServiceAgent) Run(ctx context.Context, req StartRunRequest, emit func(S
 	}); err != nil {
 		return fmt.Errorf("create service session: %w", err)
 	}
+
+	ctx = s.decorateContext(ctx, req, runID, sessionID, userID)
 
 	log.Printf("[ServiceAgent] run started: run_id=%s session_id=%s", runID, sessionID)
 	if err := emit(StreamEvent{
@@ -222,6 +244,39 @@ func (s *ServiceAgent) Run(ctx context.Context, req StartRunRequest, emit func(S
 	return fmt.Errorf("markdown format checker could not produce valid markdown after %d attempts: %s", maxCheckerAttempts, strings.Join(issues, "; "))
 }
 
+func (s *ServiceAgent) pluginConfig() runner.PluginConfig {
+	if s.langfuse == nil {
+		return runner.PluginConfig{}
+	}
+	return s.langfuse.PluginConfig
+}
+
+func (s *ServiceAgent) decorateContext(ctx context.Context, req StartRunRequest, runID, sessionID, userID string) context.Context {
+	if s.langfuse == nil {
+		return ctx
+	}
+
+	metadata := map[string]string{
+		"app_name":          s.appName,
+		"route":             "skill_workshop",
+		"run_id":            runID,
+		"session_id":        sessionID,
+		"reasoning_enabled": strconv.FormatBool(req.ReasoningEnabled),
+	}
+	if req.CurrentSkillMarkdown != "" {
+		metadata["has_current_skill"] = "true"
+	} else {
+		metadata["has_current_skill"] = "false"
+	}
+
+	return s.langfuse.DecorateContext(ctx, observability.TraceOptions{
+		TraceName: "skill-workshop.start_run",
+		UserID:    userID,
+		Tags:      []string{"adk-go", "skill-workshop", "service-agent"},
+		Metadata:  metadata,
+	})
+}
+
 func (s *ServiceAgent) runAgent(
 	ctx context.Context,
 	adkRunner *runner.Runner,
@@ -249,9 +304,9 @@ func (s *ServiceAgent) runAgent(
 		if event == nil || event.Author == "user" {
 			continue
 		}
-		
+
 		normalized := normalizeADKEvent(event)
-		
+
 		if normalized.Author == "skill_writer_agent" && !writerStarted {
 			if err := emitStatusSessionEvent(runID, "skill_writer_agent", "Starting skill draft.", emit); err != nil {
 				return err
@@ -313,7 +368,7 @@ func (s *ServiceAgent) loadSessionState(ctx context.Context, userID string, sess
 func buildInitialState(req StartRunRequest, catalog tools.NormalizedToolCatalog) map[string]any {
 	userPrompt := latestUserPrompt(req.Messages)
 	category, knowledge := resolveKnowledgeCase(userPrompt)
-	
+
 	return map[string]any{
 		StateConversationTranscript: formatMessages(req.Messages),
 		StateCurrentSkillMarkdown:   strings.TrimSpace(req.CurrentSkillMarkdown),
@@ -380,7 +435,7 @@ func normalizeADKEvent(event *session.Event) NormalizedSessionEvent {
 			text += part.Text
 		}
 	}
-	
+
 	return NormalizedSessionEvent{
 		ID:            uuid.NewString(),
 		Timestamp:     time.Now().UTC().Format(time.RFC3339Nano),

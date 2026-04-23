@@ -1,18 +1,13 @@
 ## ADDED Requirements
 
-### Requirement: .env Support
-The system SHALL support loading environment variables from a `.env` file using the `joho/godotenv` library. This allows for sensitive configuration like API keys to be managed externally from the code.
-
-#### Scenario: .env file loading at startup
-- **WHEN** the `agent-gateway` starts and a `.env` file is present in the root directory
-- **THEN** it SHALL load the environment variables defined in the `.env` file
-
 ### Requirement: Default GLM-5 Backend Selection
 The system SHALL default provider selection to `glm5` when the repository is configured for its standard runtime path and no alternative backend is explicitly chosen.
 
 #### Scenario: Default backend is glm5
 - **WHEN** the gateway starts with the repository's default provider configuration
 - **THEN** it SHALL select `glm5` as the backend used for model initialization
+
+## MODIFIED Requirements
 
 ### Requirement: Configuration via Environment Variables
 The system SHALL prioritize environment variables for configuring LLM providers, including API keys, model names, base URLs, and provider-specific runtime flags.

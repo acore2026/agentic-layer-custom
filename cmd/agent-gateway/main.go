@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 
 	"agentic-layer-custom/pkg/agents"
 	"agentic-layer-custom/pkg/api"
-	"agentic-layer-custom/pkg/model/kimi"
+	appmodel "agentic-layer-custom/pkg/model"
+	"agentic-layer-custom/pkg/observability"
 	"agentic-layer-custom/pkg/workshop"
-	"strconv"
 
 	"github.com/joho/godotenv"
 	"google.golang.org/adk/agent"
@@ -20,7 +21,7 @@ import (
 	"google.golang.org/adk/cmd/launcher/web"
 	webapi "google.golang.org/adk/cmd/launcher/web/api"
 	"google.golang.org/adk/cmd/launcher/web/webui"
-	"google.golang.org/adk/model"
+	adkmodel "google.golang.org/adk/model"
 	"google.golang.org/adk/model/gemini"
 	"google.golang.org/adk/session"
 )
@@ -34,27 +35,22 @@ func main() {
 
 	provider := os.Getenv("LLM_PROVIDER")
 	if provider == "" {
-		provider = "mock"
+		provider = appmodel.ProviderGLM5
 	}
 
-	var m model.LLM
+	var m adkmodel.LLM
 	var err error
 
 	switch provider {
 	case "mock":
 		m = &MockLLM{}
 		fmt.Println("Using Mock provider for testing")
-	case "kimi":
-		apiKey := os.Getenv("KIMI_API_KEY")
-		modelName := os.Getenv("KIMI_MODEL")
-		if modelName == "" {
-			modelName = "moonshot-v1-8k"
+	case appmodel.ProviderGLM5:
+		m, err = appmodel.NewGLM5LLMFromEnv()
+		if err != nil {
+			log.Fatal(err)
 		}
-		if apiKey == "" {
-			log.Fatal("KIMI_API_KEY must be set when using kimi provider")
-		}
-		m = kimi.NewKimiModel(apiKey, modelName)
-		fmt.Printf("Using Kimi provider (model: %s)\n", modelName)
+		fmt.Printf("Using GLM-5 provider (model: %s)\n", m.Name())
 	case "gemini":
 		modelName := os.Getenv("GEMINI_MODEL")
 		if modelName == "" {
@@ -86,8 +82,6 @@ func main() {
 		log.Fatalf("Failed to initialize Gateway Agent: %v", err)
 	}
 
-	serviceAgent := workshop.NewServiceAgent()
-
 	// Use GatewayAgent as the root, others as sub-workers
 	loader, err := agent.NewMultiLoader(gatewayAgent, systemAgent, connectionAgent)
 	if err != nil {
@@ -101,15 +95,28 @@ func main() {
 		}
 	}
 
+	langfuse, err := observability.NewLangfuseFromEnv(ctx, "agent-gateway")
+	if err != nil {
+		log.Fatalf("Failed to initialize Langfuse: %v", err)
+	}
+	defer func() {
+		if err := langfuse.Shutdown(context.Background()); err != nil {
+			log.Printf("Langfuse shutdown failed: %v", err)
+		}
+	}()
+
+	serviceAgent := workshop.NewServiceAgent(langfuse)
+
 	cfg := &launcher.Config{
 		AgentLoader:    loader,
 		SessionService: session.InMemoryService(),
+		PluginConfig:   langfuse.PluginConfig,
 	}
 
 	l := universal.NewLauncher(
 		console.NewLauncher(),
 		web.NewLauncher(
-			api.NewLauncher(gatewayAgent, serviceAgent),
+			api.NewLauncher(gatewayAgent, serviceAgent, langfuse),
 			webapi.NewLauncher(),
 			webui.NewLauncher(),
 		),

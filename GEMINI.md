@@ -10,7 +10,7 @@ The system follows a hub-and-spoke worker model:
 2.  **System Agent (`pkg/agents/system.go`)**: Categorizes user requests and determines the correct routing target.
 3.  **Connection Agent (`pkg/agents/connection.go`)**: A specialized worker that handles connection-related intents (Registration, PDU Session, ACN).
 4.  **LLM Providers (`pkg/model/`)**: Supports multiple LLM backends:
-    *   **Kimi (Moonshot AI)**: A custom implementation supporting reasoning (thinking) and tool calls.
+    *   **GLM-5**: The default OpenAI-compatible backend used by the gateway and workshop flows.
     *   **Gemini**: Integration via Google's GenAI Go SDK.
     *   **Mock**: A stateless mock provider for local routing and flow testing.
 5.  **Skills (`skill/`)**: Signaling procedures are defined as Markdown files (`SKILL.md`). These are parsed at runtime to extract required tools and orchestration logic.
@@ -37,7 +37,7 @@ The project follows a strict **Spec-Driven Development** workflow managed by `op
     go run cmd/agent-gateway/main.go
     ```
     *Access the dashboard at http://localhost:8080/ui/ after starting.*
-    *Use `LLM_PROVIDER=mock`, `LLM_PROVIDER=kimi`, or `LLM_PROVIDER=gemini` to select the backend.*
+    *Use `LLM_PROVIDER=glm5`, `LLM_PROVIDER=mock`, or `LLM_PROVIDER=gemini` to select the backend.*
 
 *   **Run Tests**:
     ```bash
@@ -54,11 +54,16 @@ The `ConnectionAgent` automatically loads all `SKILL.md` files from the `skill/`
 2.  Add a `SKILL.md` following the established pseudo-code and `CALL "Tool_Name"` pattern.
 3.  The agent will automatically discover and register the required tools using the `UniversalMockTool` at startup.
 
-### LLM Implementation (`pkg/model/kimi/kimi.go`)
+### LLM Implementation (`pkg/model/openai_compatible.go`, `pkg/model/glm.go`)
 When extending LLM providers:
 *   Ensure `SystemInstruction` from `req.Config` is correctly mapped to the provider's native format.
+*   Normalize OpenAI-compatible base URLs so both a base path and a full `/chat/completions` endpoint work.
 *   Map reasoning/thinking content to `genai.Part.Thought` to enable the **Dimmed Streamer** in the UI.
-*   Tool/Function declarations must be built manually to satisfy provider-specific API requirements (e.g., OpenAI function format).
+*   Tool/Function declarations must be built manually to satisfy provider-specific API requirements.
+
+### Provider Migration Notes
+*   The supported default backend is now GLM-5 rather than Kimi.
+*   Replace `KIMI_API_KEY`, `KIMI_BASE_URL`, and `KIMI_MODEL` with `GLM_API_KEY`, `GLM_BASE_URL`, and `GLM_MODEL`.
 
 ### Testing
 *   New features MUST include unit tests in `pkg/agents/` or `pkg/tools/`.

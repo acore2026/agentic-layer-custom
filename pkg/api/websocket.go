@@ -1,6 +1,7 @@
 package api
 
 import (
+	"agentic-layer-custom/pkg/observability"
 	"agentic-layer-custom/pkg/telemetry"
 	"agentic-layer-custom/pkg/workshop"
 	"context"
@@ -27,24 +28,28 @@ var upgrader = websocket.Upgrader{
 type WebsocketSublauncher struct {
 	gateway      agent.Agent
 	serviceAgent *workshop.ServiceAgent
+	langfuse     *observability.Langfuse
 }
 
-func NewLauncher(gateway agent.Agent, sa *workshop.ServiceAgent) weblauncher.Sublauncher {
+func NewLauncher(gateway agent.Agent, sa *workshop.ServiceAgent, langfuse *observability.Langfuse) weblauncher.Sublauncher {
 	return &WebsocketSublauncher{
 		gateway:      gateway,
 		serviceAgent: sa,
+		langfuse:     langfuse,
 	}
 }
 
-func (l *WebsocketSublauncher) Keyword() string { return "ws" }
+func (l *WebsocketSublauncher) Keyword() string                       { return "ws" }
 func (l *WebsocketSublauncher) Parse(args []string) ([]string, error) { return args, nil }
-func (l *WebsocketSublauncher) CommandLineSyntax() string { return "" }
-func (l *WebsocketSublauncher) SimpleDescription() string { return "Adds WebSocket intent streaming and Service Agent API" }
+func (l *WebsocketSublauncher) CommandLineSyntax() string             { return "" }
+func (l *WebsocketSublauncher) SimpleDescription() string {
+	return "Adds WebSocket intent streaming and Service Agent API"
+}
 
 func (l *WebsocketSublauncher) SetupSubrouters(router *mux.Router, config *launcher.Config) error {
 	// Unified handler for all paths to ensure maximum compatibility with frontend expectations
 	handler := func(w http.ResponseWriter, r *http.Request) {
-		HandleUnifiedWebSocket(w, r, l.gateway, l.serviceAgent)
+		HandleUnifiedWebSocket(w, r, l.gateway, l.serviceAgent, l.langfuse)
 	}
 
 	router.HandleFunc("/v1/intents/stream", handler)
@@ -73,7 +78,7 @@ type IntentRequest struct {
 
 // HandleUnifiedWebSocket manages a WebSocket connection and dispatches to the appropriate engine
 // based on the message type (signaling vs workshop).
-func HandleUnifiedWebSocket(w http.ResponseWriter, r *http.Request, gateway agent.Agent, sa *workshop.ServiceAgent) {
+func HandleUnifiedWebSocket(w http.ResponseWriter, r *http.Request, gateway agent.Agent, sa *workshop.ServiceAgent, langfuse *observability.Langfuse) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		fmt.Printf("[WS] Upgrade failed: %v\n", err)
@@ -105,7 +110,7 @@ func HandleUnifiedWebSocket(w http.ResponseWriter, r *http.Request, gateway agen
 			if err := json.Unmarshal(p, &req); err != nil {
 				continue
 			}
-			go handleSignaling(conn, &writeMu, req, gateway)
+			go handleSignaling(conn, &writeMu, req, gateway, langfuse)
 
 		case "start_run":
 			var req workshop.StartRunRequest
@@ -120,7 +125,7 @@ func HandleUnifiedWebSocket(w http.ResponseWriter, r *http.Request, gateway agen
 	}
 }
 
-func handleSignaling(conn *websocket.Conn, mu *sync.Mutex, req IntentRequest, gateway agent.Agent) {
+func handleSignaling(conn *websocket.Conn, mu *sync.Mutex, req IntentRequest, gateway agent.Agent, langfuse *observability.Langfuse) {
 	fmt.Printf("[WS] Executing signaling intent: %s\n", req.Data.Intent)
 
 	// Subscribe to telemetry hub
@@ -149,6 +154,7 @@ func handleSignaling(conn *websocket.Conn, mu *sync.Mutex, req IntentRequest, ga
 		AppName:        "6G-AI-Core",
 		Agent:          gateway,
 		SessionService: ss,
+		PluginConfig:   pluginConfig(langfuse),
 	})
 	if err != nil {
 		fmt.Printf("[WS] Runner creation failed: %v\n", err)
@@ -159,6 +165,7 @@ func handleSignaling(conn *websocket.Conn, mu *sync.Mutex, req IntentRequest, ga
 		AppName: "6G-AI-Core",
 		UserID:  "web-user",
 	})
+	ctx = decorateSignalingContext(ctx, langfuse, req, sessResp.Session.ID())
 
 	msg := &genai.Content{
 		Role:  "user",
@@ -171,6 +178,36 @@ func handleSignaling(conn *websocket.Conn, mu *sync.Mutex, req IntentRequest, ga
 			break
 		}
 	}
+}
+
+func pluginConfig(langfuse *observability.Langfuse) runner.PluginConfig {
+	if langfuse == nil {
+		return runner.PluginConfig{}
+	}
+	return langfuse.PluginConfig
+}
+
+func decorateSignalingContext(ctx context.Context, langfuse *observability.Langfuse, req IntentRequest, sessionID string) context.Context {
+	if langfuse == nil {
+		return ctx
+	}
+
+	metadata := map[string]string{
+		"app_name":     "6G-AI-Core",
+		"route":        "signaling",
+		"session_id":   sessionID,
+		"message_type": req.Type,
+	}
+	if req.Data.ScenarioID != "" {
+		metadata["scenario_id"] = req.Data.ScenarioID
+	}
+
+	return langfuse.DecorateContext(ctx, observability.TraceOptions{
+		TraceName: "agent-gateway.execute_intent",
+		UserID:    "web-user",
+		Tags:      []string{"adk-go", "agent-gateway", "signaling"},
+		Metadata:  metadata,
+	})
 }
 
 func handleWorkshop(conn *websocket.Conn, mu *sync.Mutex, req workshop.StartRunRequest, sa *workshop.ServiceAgent) {

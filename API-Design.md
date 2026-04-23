@@ -47,7 +47,7 @@ The Go backend will stream discrete events back to the frontend. Every message m
 ### Event Type: `llm_thought`
 
 - **Target UI:** Left Panel (Can be rendered inside the assistant payload as dimmed text)
-- **Trigger:** When `pkg/model/kimi/kimi.go` yields a `genai.Part.Thought` chunk.
+- **Trigger:** When the active OpenAI-compatible provider yields a `genai.Part.Thought` chunk.
 
 ```json
 {
