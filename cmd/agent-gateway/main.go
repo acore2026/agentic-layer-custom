@@ -88,7 +88,7 @@ func main() {
 		log.Fatalf("Failed to create agent loader: %v", err)
 	}
 
-	port := 8080
+	port := 7200
 	if p := os.Getenv("API_PORT"); p != "" {
 		if val, err := strconv.Atoi(p); err == nil {
 			port = val
@@ -122,7 +122,7 @@ func main() {
 		),
 	)
 
-	fmt.Printf("Launching ADK Web UI on http://localhost:%d/ui/ ...\n", port)
+	fmt.Printf("Launching ADK Web UI on http://0.0.0.0:%d/ui/ ...\n", port)
 	// The universal launcher needs "web" to activate the web server,
 	// then "api" for REST, "webui" for dashboard, and "ws" for our custom stream.
 	executeArgs := []string{"web", "--port", strconv.Itoa(port), "api", "webui", "ws"}

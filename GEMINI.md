@@ -32,11 +32,11 @@ The project follows a strict **Spec-Driven Development** workflow managed by `op
 
 ### Key Commands
 
-*   **Run the Gateway (Web UI)**:
+    *   **Run the Gateway (Web UI)**:
     ```bash
     go run cmd/agent-gateway/main.go
     ```
-    *Access the dashboard at http://localhost:8080/ui/ after starting.*
+    *Access the dashboard at http://0.0.0.0:7200/ui/ after starting.*
     *Use `LLM_PROVIDER=glm5`, `LLM_PROVIDER=mock`, or `LLM_PROVIDER=gemini` to select the backend.*
 
 *   **Run Tests**:

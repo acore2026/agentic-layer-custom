@@ -6,7 +6,7 @@
 ## Build, Test, and Development Commands
 Use Go 1.26.1+.
 
-- `go run ./cmd/agent-gateway` starts the gateway on `http://localhost:8080/ui/`.
+- `go run ./cmd/agent-gateway` starts the gateway on `http://0.0.0.0:7200/ui/`.
 - `API_PORT=9090 LLM_PROVIDER=glm5 GLM_API_KEY=... go run ./cmd/agent-gateway` runs the default provider on a custom port.
 - `go test ./...` runs the full test suite across `pkg/...`.
 - `go test ./pkg/agents ./pkg/workshop` is a useful focused pass when changing orchestration logic.
